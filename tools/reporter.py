@@ -1,0 +1,184 @@
+"""
+tools/reporter.py — Generate beautiful Markdown reports and terminal summaries.
+"""
+
+from __future__ import annotations
+import json
+from datetime import datetime
+from pathlib import Path
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich import box
+
+from config import ResearchReport, REPORTS_DIR
+
+console = Console()
+
+CONF_EMOJI  = {"high": "🟢", "medium": "🟡", "low": "🔴"}
+CAT_EMOJI   = {"fact": "📌", "opinion": "💭", "data": "📊", "trend": "📈"}
+
+
+def print_terminal_summary(report: ResearchReport) -> None:
+    """Print a rich terminal summary after research completes."""
+    console.print()
+    console.print(Panel.fit(
+        f"[bold cyan]Research Complete[/bold cyan]\n"
+        f"Topic: [bold]{report.topic}[/bold]\n"
+        f"Sources: {report.source_count} | Words: {report.word_count:,} | "
+        f"Findings: {len(report.key_findings)} | Contradictions: {len(report.contradictions)}",
+        border_style="cyan",
+    ))
+
+    # Executive summary
+    console.print(Panel(
+        report.executive_summary[:600] + ("..." if len(report.executive_summary) > 600 else ""),
+        title="[bold]📋 Executive Summary[/bold]",
+        border_style="dim",
+    ))
+
+    # Key findings table
+    if report.key_findings:
+        table = Table(
+            title="Key Findings",
+            box=box.ROUNDED, border_style="green", show_lines=True,
+        )
+        table.add_column("Conf",     width=4)
+        table.add_column("Category", width=10)
+        table.add_column("Finding",  max_width=65)
+
+        for f in report.key_findings[:8]:
+            table.add_row(
+                CONF_EMOJI.get(f.confidence, "⚪"),
+                f"{CAT_EMOJI.get(f.category, '?')} {f.category}",
+                f.claim,
+            )
+        console.print(table)
+
+    # Contradictions
+    if report.contradictions:
+        console.print()
+        console.print(Panel(
+            "\n".join([
+                f"⚠️  [bold]{c.topic}[/bold]\n"
+                f"   A: {c.claim_a[:80]} [{c.source_a}]\n"
+                f"   B: {c.claim_b[:80]} [{c.source_b}]\n"
+                f"   → {c.resolution[:120]}"
+                for c in report.contradictions
+            ]),
+            title="[bold yellow]⚠️  Contradictions Found[/bold yellow]",
+            border_style="yellow",
+        ))
+
+    console.print()
+
+
+def save_markdown_report(report: ResearchReport) -> Path:
+    """Save the full research report as a Markdown file."""
+    ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slug = report.topic[:40].replace(" ", "_").replace("/", "-")
+    out  = REPORTS_DIR / f"{slug}_{ts}.md"
+
+    lines = [
+        f"# Research Report: {report.topic}",
+        f"",
+        f"**Generated:** {datetime.now().strftime('%B %d, %Y at %H:%M')}  ",
+        f"**Sources:** {report.source_count} | "
+        f"**Words:** {report.word_count:,} | "
+        f"**Findings:** {len(report.key_findings)}",
+        f"",
+        f"---",
+        f"",
+        f"## 📋 Executive Summary",
+        f"",
+        report.executive_summary,
+        f"",
+        f"---",
+        f"",
+    ]
+
+    # Sections
+    for section in report.sections:
+        lines += [
+            f"## {section.get('heading', 'Section')}",
+            f"",
+            section.get("content", ""),
+            f"",
+        ]
+
+    # Key findings
+    lines += [
+        f"---",
+        f"",
+        f"## 🔍 Key Findings",
+        f"",
+        f"| Confidence | Category | Finding | Evidence |",
+        f"|---|---|---|---|",
+    ]
+    for f in report.key_findings:
+        conf = f"{CONF_EMOJI.get(f.confidence, '⚪')} {f.confidence}"
+        cat  = f"{CAT_EMOJI.get(f.category, '?')} {f.category}"
+        lines.append(f"| {conf} | {cat} | {f.claim} | {f.evidence[:100]}... |")
+
+    # Contradictions
+    if report.contradictions:
+        lines += ["", "---", "", "## ⚠️ Contradictions & Conflicting Claims", ""]
+        for c in report.contradictions:
+            lines += [
+                f"### {c.topic}",
+                f"",
+                f"**Claim A:** {c.claim_a}  ",
+                f"*Source: {c.source_a}*",
+                f"",
+                f"**Claim B:** {c.claim_b}  ",
+                f"*Source: {c.source_b}*",
+                f"",
+                f"**Resolution:** {c.resolution}",
+                f"",
+            ]
+
+    # Conclusion
+    lines += [
+        "---",
+        "",
+        "## 🎯 Conclusion",
+        "",
+        report.conclusion,
+        "",
+        "---",
+        "",
+        "## ⚠️ Limitations",
+        "",
+        report.limitations,
+        "",
+        "---",
+        "",
+        "## 📚 Sources",
+        "",
+    ]
+    for s in report.sources_cited:
+        lines.append(
+            f"- [{s.title[:70]}]({s.url})  \n"
+            f"  `{s.domain}` | {s.source_type} | Credibility: {s.credibility}/10"
+        )
+
+    lines += [
+        "",
+        "---",
+        f"*Generated by [AI Deep Research Agent](https://github.com/EnggTalha/ai-deep-research-agent) "
+        f"powered by [Claude](https://anthropic.com)*",
+    ]
+
+    out.write_text("\n".join(lines), encoding="utf-8")
+    console.print(f"[green]✓[/green] Markdown report → {out}")
+    return out
+
+
+def save_json_report(report: ResearchReport) -> Path:
+    ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
+    slug = report.topic[:40].replace(" ", "_").replace("/", "-")
+    out  = REPORTS_DIR / f"{slug}_{ts}.json"
+    with open(out, "w") as f:
+        json.dump(report.model_dump(), f, indent=2, default=str)
+    console.print(f"[green]✓[/green] JSON report → {out}")
+    return out
